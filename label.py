@@ -1,10 +1,12 @@
-# nix-shell -p python313 python313Packages.numpy python313Packages.matplotlib python313Packages.opencv4
+# nix-shell -p python314 python314Packages.numpy python314Packages.matplotlib python314Packages.opencv4 python314Packages.pyqt6
 
 import json
 import os
 import glob
 import numpy as np
 import cv2
+import matplotlib
+matplotlib.use("QtAgg")
 import matplotlib.pyplot as plt
 from PIL import Image
 

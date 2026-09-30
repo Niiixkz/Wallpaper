@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>圖片裁切工具 — 16:9 / 9:16</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root{
+    --ink:#eceae4; --paper:#121212; --line:#2c2c2e; --accent:#7fbf9e;
+    --accent-2:#e08a4d; --muted:#8f8c85; --panel:#1a1a1b; --canvasbg:#0a0a0a;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;
+    background:var(--paper); color:var(--ink); padding-bottom:60px;
+  }
+  header{
+    padding:20px 28px; border-bottom:1px solid var(--line);
+    display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+  }
+  header h1{ font-size:18px; margin:0; font-weight:600; letter-spacing:.2px; color:var(--ink);}
+  header p{ margin:0; color:var(--muted); font-size:13px;}
+
+  .bar{
+    display:flex; gap:12px; align-items:center; flex-wrap:wrap;
+    padding:16px 28px; border-bottom:1px solid var(--line); background:var(--panel);
+  }
+  .bar label{ font-size:13px; color:var(--muted); }
+  .field{ display:flex; flex-direction:column; gap:4px; }
+  input[type=number]{
+    width:80px; padding:7px 8px; border:1px solid var(--line); border-radius:4px;
+    font-size:14px; background:#0f0f10; color:var(--ink);
+  }
+  button{
+    padding:8px 16px; border:1px solid var(--ink); background:var(--ink); color:#111;
+    border-radius:4px; font-size:13px; cursor:pointer; font-weight:600;
+  }
+  button.secondary{ background:transparent; color:var(--ink); border:1px solid var(--line); font-weight:400; }
+  button.accent{ background:var(--accent); border-color:var(--accent); color:#0c1a13; }
+  button:disabled{ opacity:.35; cursor:not-allowed; }
+  button:hover:not(:disabled){ opacity:.85; }
+  .path-chip{
+    font-size:12px; padding:5px 10px; border:1px solid var(--line); border-radius:20px;
+    background:#0f0f10; color:var(--muted); max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .status{ font-size:13px; color:var(--muted); padding:10px 28px 0; }
+
+  main{ padding:24px 28px; }
+  .empty{ color:var(--muted); font-size:14px; }
+
+  .progress{ display:flex; align-items:center; gap:14px; margin-bottom:18px; flex-wrap:wrap; }
+  .progress .file{ font-size:15px; font-weight:600; color:var(--ink); }
+  .progress .count{ font-size:13px; color:var(--muted); }
+  .progress .folder{ font-size:12px; color:var(--accent); border:1px solid var(--accent); border-radius:3px; padding:2px 8px; }
+  .progress .zipcount{ font-size:12px; color:var(--muted); }
+
+  .stage{ display:flex; gap:28px; flex-wrap:wrap; }
+  .cropper-block{
+    background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:16px;
+  }
+  .cropper-block h3{ margin:0 0 10px; font-size:13px; font-weight:600; color:var(--ink); }
+  .cropper-block .aspect-tag{ font-size:11px; color:var(--muted); font-weight:400; margin-left:6px;}
+  canvas.crop-canvas{ touch-action:none; display:block; cursor:move; border:1px solid var(--line); background:var(--canvasbg); }
+  .cropper-tools{ display:flex; gap:8px; margin-top:10px; }
+  .cropper-tools button{ padding:5px 10px; font-size:12px; }
+
+  footer.actions{
+    display:flex; gap:12px; align-items:center; flex-wrap:wrap;
+    padding:20px 28px 0; border-top:1px solid var(--line); margin-top:24px;
+  }
+  .hint{ font-size:12px; color:var(--muted); margin-top:6px; max-width:640px; width:100%; }
+  .warn{
+    margin:16px 28px 0; padding:12px 14px; border:1px solid var(--accent-2); background:#2a1c12;
+    color:#f0c9a3; font-size:13px; border-radius:4px; display:none;
+  }
+  .log{ font-size:12px; color:var(--muted); padding:16px 28px 0; white-space:pre-line; border-top:1px solid var(--line); margin-top:20px;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>圖片裁切工具</h1>
+  <p>選擇資料夾 → 逐張裁切成 16:9 / 9:16 → 打包成 ZIP 下載（O / H / V，編號資料夾）</p>
+</header>
+
+<div class="warn" id="apiWarn">
+  這個瀏覽器不支援讀取整個資料夾，請改用 Chrome / Edge / Firefox 最新版本。
+</div>
+
+<div class="bar">
+  <div class="field">
+    <label>來源資料夾（含 png / jpg 圖片）</label>
+    <button id="pickSource" class="secondary">選擇來源資料夾</button>
+    <input type="file" id="sourceInput" webkitdirectory directory multiple style="display:none">
+  </div>
+  <span class="path-chip" id="sourceChip">尚未選擇</span>
+
+  <div class="field">
+    <label>起始編號</label>
+    <input type="number" id="startNum" value="0" min="0" max="999">
+  </div>
+
+  <button id="startBtn" disabled>開始</button>
+</div>
+
+<div class="status" id="statusLine"></div>
+
+<div class="bar" id="zipBar" style="display:none;">
+  <span class="zipcount" id="zipCountTop">ZIP 內已有 0 組</span>
+  <button class="accent" id="downloadZipBtnTop">下載 ZIP</button>
+</div>
+
+<main>
+  <div class="empty" id="emptyMsg">請先選擇來源資料夾並按下「開始」。</div>
+
+  <div id="workArea" style="display:none;">
+    <div class="progress">
+      <span class="file" id="curFile"></span>
+      <span class="count" id="curCount"></span>
+      <span class="folder" id="curFolder"></span>
+      <span class="zipcount" id="zipCount"></span>
+    </div>
+
+    <div class="stage">
+      <div class="cropper-block">
+        <h3>橫向裁切 <span class="aspect-tag">16:9 → H.ext</span></h3>
+        <canvas class="crop-canvas" id="canvasH"></canvas>
+        <div class="cropper-tools">
+          <button class="secondary" id="resetH">重設框</button>
+        </div>
+      </div>
+      <div class="cropper-block">
+        <h3>直向裁切 <span class="aspect-tag">9:16 → V.ext</span></h3>
+        <canvas class="crop-canvas" id="canvasV"></canvas>
+        <div class="cropper-tools">
+          <button class="secondary" id="resetV">重設框</button>
+        </div>
+      </div>
+    </div>
+
+    <footer class="actions">
+      <button id="saveNextBtn">存檔並下一張</button>
+      <button class="secondary" id="skipBtn">略過此圖（不加入 ZIP）</button>
+      <div class="hint">存檔會在 ZIP 內建立資料夾（例如 000），加入 O.ext（原圖）、H.ext（16:9）、V.ext（9:16），接著編號 +1 並前往下一張。因 Firefox 無法直接寫入本機資料夾，全部結果會打包成一個 ZIP，隨時可按「下載目前 ZIP」取得目前進度，解壓縮到你要的位置即可。</div>
+    </footer>
+  </div>
+
+  <div class="log" id="logArea"></div>
+</main>
+
+<script>
+(function(){
+  const IMG_EXT = ['png','jpg','jpeg'];
+  const MIME_BY_EXT = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg' };
+
+  const el = id => document.getElementById(id);
+  const apiWarn = el('apiWarn'), sourceChip = el('sourceChip');
+  const pickSource = el('pickSource'), sourceInput = el('sourceInput'), startBtn = el('startBtn');
+  const startNum = el('startNum'), statusLine = el('statusLine');
+  const emptyMsg = el('emptyMsg'), workArea = el('workArea');
+  const curFile = el('curFile'), curCount = el('curCount'), curFolder = el('curFolder'), zipCountEl = el('zipCount');
+  const saveNextBtn = el('saveNextBtn'), skipBtn = el('skipBtn');
+  const zipBar = el('zipBar'), zipCountTop = el('zipCountTop'), downloadZipBtn = el('downloadZipBtnTop');
+  const logArea = el('logArea');
+
+  if (!('webkitdirectory' in sourceInput) || typeof JSZip === 'undefined') {
+    apiWarn.style.display = 'block';
+  }
+
+  let fileEntries = [];      // [{name, ext, file}]
+  let curIndex = -1;
+  let curNumber = 0;
+  let curImg = null;
+  let cropperH = null, cropperV = null;
+  let zip = null;
+  let savedCount = 0;
+
+  function log(msg){
+    const t = new Date().toLocaleTimeString();
+    logArea.textContent = `[${t}] ${msg}\n` + logArea.textContent;
+  }
+
+  function extOf(name){
+    const m = /\.([a-zA-Z0-9]+)$/.exec(name);
+    return m ? m[1].toLowerCase() : '';
+  }
+
+  pickSource.addEventListener('click', () => sourceInput.click());
+
+  sourceInput.addEventListener('change', () => {
+    const files = Array.from(sourceInput.files || []).filter(f => IMG_EXT.includes(extOf(f.name)));
+    if (files.length === 0) {
+      sourceChip.textContent = '找不到圖片';
+      startBtn.disabled = true;
+      return;
+    }
+    fileEntries = files
+      .sort((a,b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name, 'zh-Hant'))
+      .map(f => ({ name: f.name, ext: extOf(f.name), file: f }));
+    const folderName = (files[0].webkitRelativePath || '').split('/')[0] || '已選擇資料夾';
+    sourceChip.textContent = `${folderName}（${fileEntries.length} 張）`;
+    startBtn.disabled = false;
+  });
+
+  startBtn.addEventListener('click', async () => {
+    if (fileEntries.length === 0) return;
+    zip = new JSZip();
+    savedCount = 0;
+    zipBar.style.display = 'none';
+    curNumber = Math.max(0, parseInt(startNum.value || '0', 10));
+    curIndex = -1;
+    statusLine.textContent = `找到 ${fileEntries.length} 張圖片。`;
+    emptyMsg.style.display = 'none';
+    workArea.style.display = 'block';
+    await nextImage();
+  });
+
+  function padNum(n){ return String(n).padStart(3, '0'); }
+  function updateZipCount(){
+    zipCountEl.textContent = `ZIP 內已有 ${savedCount} 組`;
+    zipCountTop.textContent = `ZIP 內已有 ${savedCount} 組`;
+    zipBar.style.display = savedCount > 0 ? 'flex' : 'none';
+  }
+
+  async function nextImage(){
+    curIndex++;
+    if (curIndex >= fileEntries.length) {
+      workArea.style.display = 'none';
+      emptyMsg.style.display = 'block';
+      emptyMsg.textContent = `全部 ${fileEntries.length} 張圖片已處理完畢，請記得按「下載 ZIP」取得檔案。`;
+      log('全部處理完成。');
+      return;
+    }
+    const entry = fileEntries[curIndex];
+    const url = URL.createObjectURL(entry.file);
+    const img = new Image();
+    await new Promise((res, rej) => {
+      img.onload = res; img.onerror = rej; img.src = url;
+    });
+    curImg = img;
+    curImg._file = entry.file;
+    curImg._entry = entry;
+
+    curFile.textContent = entry.name;
+    curCount.textContent = `第 ${curIndex+1} / ${fileEntries.length} 張`;
+    curFolder.textContent = `輸出資料夾：${padNum(curNumber)}`;
+    updateZipCount();
+
+    cropperH = new Cropper(el('canvasH'), img, 16/9);
+    cropperV = new Cropper(el('canvasV'), img, 9/16);
+  }
+
+  el('resetH').addEventListener('click', () => cropperH && cropperH.resetRect());
+  el('resetV').addEventListener('click', () => cropperV && cropperV.resetRect());
+
+  skipBtn.addEventListener('click', () => {
+    log(`略過：${curImg._entry.name}（未加入 ZIP）`);
+    nextImage();
+  });
+
+  saveNextBtn.addEventListener('click', async () => {
+    if (!curImg) return;
+    saveNextBtn.disabled = true; skipBtn.disabled = true;
+    try {
+      await saveCurrent();
+      curNumber++;
+      await nextImage();
+    } catch(e) {
+      console.error(e);
+      log('加入 ZIP 失敗：' + e.message);
+      statusLine.textContent = '發生錯誤，請查看下方紀錄。';
+    } finally {
+      saveNextBtn.disabled = false; skipBtn.disabled = false;
+    }
+  });
+
+  downloadZipBtn.addEventListener('click', async () => {
+    if (!zip || savedCount === 0) { log('ZIP 內還沒有任何檔案。'); return; }
+    downloadZipBtn.disabled = true;
+    const oldText = downloadZipBtn.textContent;
+    downloadZipBtn.textContent = '打包中…';
+    try {
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'cropped_output.zip';
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      log(`已下載 ZIP（內含 ${savedCount} 組資料夾）。`);
+    } finally {
+      downloadZipBtn.disabled = false;
+      downloadZipBtn.textContent = oldText;
+    }
+  });
+
+  function canvasToBlob(canvas, mime){
+    return new Promise(resolve => canvas.toBlob(b => resolve(b), mime, 0.92));
+  }
+
+  async function saveCurrent(){
+    const entry = curImg._entry;
+    const folderName = padNum(curNumber);
+    const ext = entry.ext === 'jpeg' ? 'jpg' : entry.ext;
+    const mime = MIME_BY_EXT[entry.ext] || 'image/jpeg';
+
+    // O.ext — 原始檔案（直接複製 bytes，無損）
+    const originalBuf = await curImg._file.arrayBuffer();
+    zip.file(`${folderName}/O.${ext}`, originalBuf);
+
+    // H.ext — 16:9
+    const hCanvas = cropperH.exportCanvas();
+    const hBlob = await canvasToBlob(hCanvas, mime);
+    zip.file(`${folderName}/H.${ext}`, hBlob);
+
+    // V.ext — 9:16
+    const vCanvas = cropperV.exportCanvas();
+    const vBlob = await canvasToBlob(vCanvas, mime);
+    zip.file(`${folderName}/V.${ext}`, vBlob);
+
+    savedCount++;
+    updateZipCount();
+    log(`已加入 ${folderName}/：O.${ext}, H.${ext}, V.${ext}（來源：${entry.name}）`);
+  }
+
+  // ---------- Cropper ----------
+  function Cropper(canvas, img, aspect){
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.img = img;
+    this.aspect = aspect;
+
+    const maxW = 440, maxH = 440;
+    const scale = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight, 1);
+    this.scale = scale;
+    this.dispW = Math.max(1, Math.round(img.naturalWidth * scale));
+    this.dispH = Math.max(1, Math.round(img.naturalHeight * scale));
+    canvas.width = this.dispW;
+    canvas.height = this.dispH;
+
+    this.resetRect();
+    this._bind();
+  }
+
+  Cropper.prototype.resetRect = function(){
+    let w = this.dispW, h = w / this.aspect;
+    if (h > this.dispH) { h = this.dispH; w = h * this.aspect; }
+    this.rect = { x: (this.dispW - w) / 2, y: (this.dispH - h) / 2, w, h };
+    this.render();
+  };
+
+  Cropper.prototype.render = function(){
+    const ctx = this.ctx, r = this.rect;
+    ctx.clearRect(0, 0, this.dispW, this.dispH);
+    ctx.drawImage(this.img, 0, 0, this.dispW, this.dispH);
+
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillRect(0, 0, this.dispW, r.y);
+    ctx.fillRect(0, r.y + r.h, this.dispW, this.dispH - r.y - r.h);
+    ctx.fillRect(0, r.y, r.x, r.h);
+    ctx.fillRect(r.x + r.w, r.y, this.dispW - r.x - r.w, r.h);
+
+    ctx.strokeStyle = '#7fbf9e';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+
+    ctx.fillStyle = '#7fbf9e';
+    const hs = 8;
+    for (const [hx, hy] of this._handlePoints()) {
+      ctx.fillRect(hx - hs/2, hy - hs/2, hs, hs);
+    }
+  };
+
+  Cropper.prototype._handlePoints = function(){
+    const r = this.rect;
+    return [
+      [r.x, r.y], [r.x + r.w, r.y],
+      [r.x, r.y + r.h], [r.x + r.w, r.y + r.h]
+    ];
+  };
+
+  Cropper.prototype._hitHandle = function(px, py){
+    const names = ['tl','tr','bl','br'];
+    const pts = this._handlePoints();
+    for (let i = 0; i < pts.length; i++) {
+      const [hx, hy] = pts[i];
+      if (Math.abs(px - hx) <= 10 && Math.abs(py - hy) <= 10) return names[i];
+    }
+    return null;
+  };
+
+  Cropper.prototype._inRect = function(px, py){
+    const r = this.rect;
+    return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+  };
+
+  Cropper.prototype._bind = function(){
+    const self = this;
+    let mode = null, startPx = 0, startPy = 0, startRect = null, anchor = null;
+
+    function pos(ev){
+      const b = self.canvas.getBoundingClientRect();
+      return { x: (ev.clientX - b.left) * (self.canvas.width / b.width),
+               y: (ev.clientY - b.top) * (self.canvas.height / b.height) };
+    }
+
+    self.canvas.addEventListener('pointerdown', ev => {
+      const p = pos(ev);
+      const h = self._hitHandle(p.x, p.y);
+      startRect = { ...self.rect };
+      if (h) {
+        mode = 'resize:' + h;
+        const r = startRect;
+        anchor = h === 'br' ? { x: r.x, y: r.y }
+               : h === 'tl' ? { x: r.x + r.w, y: r.y + r.h }
+               : h === 'tr' ? { x: r.x, y: r.y + r.h }
+               : { x: r.x + r.w, y: r.y };
+      } else if (self._inRect(p.x, p.y)) {
+        mode = 'move';
+        startPx = p.x; startPy = p.y;
+      } else {
+        mode = null;
+      }
+      if (mode) self.canvas.setPointerCapture(ev.pointerId);
+    });
+
+    self.canvas.addEventListener('pointermove', ev => {
+      if (!mode) return;
+      const p = pos(ev);
+      if (mode === 'move') {
+        let nx = startRect.x + (p.x - startPx);
+        let ny = startRect.y + (p.y - startPy);
+        nx = Math.max(0, Math.min(self.dispW - startRect.w, nx));
+        ny = Math.max(0, Math.min(self.dispH - startRect.h, ny));
+        self.rect = { x: nx, y: ny, w: startRect.w, h: startRect.h };
+      } else if (mode.startsWith('resize:')) {
+        const dx = Math.abs(p.x - anchor.x);
+        let w = Math.max(20, dx);
+        let h = w / self.aspect;
+        const maxWByCanvas = anchor.x >= self.dispW/2 ? anchor.x : self.dispW - anchor.x;
+        const maxHByCanvas = anchor.y >= self.dispH/2 ? anchor.y : self.dispH - anchor.y;
+        if (w > maxWByCanvas) { w = maxWByCanvas; h = w / self.aspect; }
+        if (h > maxHByCanvas) { h = maxHByCanvas; w = h * self.aspect; }
+        self.rect = {
+          x: p.x >= anchor.x ? anchor.x : anchor.x - w,
+          y: p.y >= anchor.y ? anchor.y : anchor.y - h,
+          w, h
+        };
+      }
+      self.render();
+    });
+
+    self.canvas.addEventListener('pointerup', () => { mode = null; });
+    self.canvas.addEventListener('pointercancel', () => { mode = null; });
+  };
+
+  Cropper.prototype.exportCanvas = function(){
+    const r = this.rect;
+    let sx = r.x / this.scale, sy = r.y / this.scale;
+    let sw = r.w / this.scale, sh = r.h / this.scale;
+
+    // 钳制到原图范围内，避免因四捨五入誤差取樣到圖片外（會產生黑邊）
+    sx = Math.max(0, Math.min(sx, this.img.naturalWidth));
+    sy = Math.max(0, Math.min(sy, this.img.naturalHeight));
+    sw = Math.min(sw, this.img.naturalWidth - sx);
+    sh = Math.min(sh, this.img.naturalHeight - sy);
+
+    const out = document.createElement('canvas');
+    out.width = Math.max(1, Math.round(sw));
+    out.height = Math.max(1, Math.round(sh));
+    out.getContext('2d').drawImage(this.img, sx, sy, sw, sh, 0, 0, out.width, out.height);
+    return out;
+  };
+
+})();
+</script>
+</body>
+</html>

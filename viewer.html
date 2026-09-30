@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wallpaper 資料夾瀏覽器</title>
+<style>
+  :root{
+    --bg: #0d0f12;
+    --panel: #15181c;
+    --line: #262b31;
+    --text: #e8eaed;
+    --muted: #8b929c;
+    --accent: #5eb1ff;
+    --accent-dim: #2c3f52;
+    --danger: #ff6b6b;
+  }
+  *{ box-sizing: border-box; }
+  html,body{
+    margin:0; padding:0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", "PingFang TC", "Noto Sans TC", sans-serif;
+  }
+
+  header{
+    position: sticky; top:0; z-index: 10;
+    background: rgba(13,15,18,0.92);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+    padding: 16px 24px;
+    display:flex; flex-wrap:wrap; align-items:center; gap:16px;
+  }
+  h1{
+    font-size: 16px; font-weight: 600; margin:0;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+  }
+  .path-row{
+    display:flex; align-items:center; gap:10px;
+    flex: 1 1 auto;
+    min-width: 220px;
+  }
+  #pickBtn{
+    background: var(--accent);
+    color: #05131f;
+    border: none;
+    padding: 8px 14px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  #pickBtn:hover{ filter: brightness(1.08); }
+  #pathLabel{
+    color: var(--muted);
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .modes{
+    display:flex; gap:2px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 2px;
+  }
+  .modes button{
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    padding: 7px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  .modes button.active{
+    background: var(--accent-dim);
+    color: var(--accent);
+  }
+  #status{
+    color: var(--muted);
+    font-size: 12px;
+    margin-left: auto;
+    white-space: nowrap;
+  }
+
+  main{ padding: 24px; }
+  .hint{
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.7;
+    max-width: 640px;
+    margin: 8px 0 24px;
+  }
+  .hint code{
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 12px;
+  }
+  .unsupported{
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    background: rgba(255,107,107,0.08);
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    max-width: 640px;
+  }
+
+  #grid{
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 18px;
+  }
+  .card{
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .card-title{
+    font-size: 12px;
+    color: var(--muted);
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+    font-variant-numeric: tabular-nums;
+  }
+  .img-wrap{
+    display:flex;
+    gap: 1px;
+    background: var(--line);
+  }
+  .img-wrap > div.slot{
+    flex: 1;
+    position: relative;
+    background: #000;
+    display:flex; align-items:center; justify-content:center;
+    overflow:hidden;
+  }
+  .slot.h{ aspect-ratio: 16 / 9; }
+  .slot.v{ aspect-ratio: 9 / 16; }
+  .slot img{
+    width: 100%; height: 100%;
+    object-fit: cover;
+    display:block;
+  }
+  .slot .missing{
+    color: var(--muted);
+    font-size: 11px;
+    padding: 6px;
+    text-align:center;
+  }
+
+  #empty{
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: 40px;
+    text-align:center;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Wallpaper 瀏覽器</h1>
+  <div class="path-row">
+    <button id="pickBtn">選擇資料夾…</button>
+    <input type="file" id="dirInput" webkitdirectory directory multiple style="display:none">
+    <span id="pathLabel">尚未選擇</span>
+  </div>
+  <div class="modes">
+    <button data-mode="H" class="active">H（16:9）</button>
+    <button data-mode="V">V（9:16）</button>
+    <button data-mode="ALL">全部</button>
+  </div>
+  <span id="status"></span>
+</header>
+
+<main>
+  <div id="supportCheck"></div>
+  <p class="hint">
+    瀏覽器基於安全限制不允許用文字直接輸入磁碟路徑存取檔案，因此改用「選擇資料夾」授權存取（點下去會跳出系統的資料夾選擇視窗）。
+    選好根目錄後，工具會讀取其中符合 <code>%3d</code>（三位數字，如 <code>000</code>、<code>001</code>）命名的子資料夾，
+    並依上方選項顯示每個資料夾內的 <code>H.avif</code> / <code>V.avif</code>。所有檔案只在瀏覽器本機記憶體處理，不會上傳到任何伺服器。
+  </p>
+  <div id="grid"></div>
+  <div id="empty" style="display:none;">選擇資料夾後，這裡會顯示掃描到的圖片。</div>
+</main>
+
+<script>
+  let folders = []; // [{ name, files: { H: File, V: File } }]
+  let mode = 'H';
+
+  const pickBtn = document.getElementById('pickBtn');
+  const dirInput = document.getElementById('dirInput');
+  const pathLabel = document.getElementById('pathLabel');
+  const statusEl = document.getElementById('status');
+  const grid = document.getElementById('grid');
+  const emptyEl = document.getElementById('empty');
+  const supportCheck = document.getElementById('supportCheck');
+  const modeButtons = document.querySelectorAll('.modes button');
+
+  const testInput = document.createElement('input');
+  if (!('webkitdirectory' in testInput)) {
+    supportCheck.innerHTML = '<div class="unsupported">此瀏覽器不支援資料夾上傳功能，請改用較新版的 Firefox / Chrome。</div>';
+    pickBtn.disabled = true;
+  }
+
+  modeButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      mode = btn.dataset.mode;
+      modeButtons.forEach(b => b.classList.toggle('active', b === btn));
+      render();
+    });
+  });
+
+  pickBtn.addEventListener('click', () => dirInput.click());
+
+  dirInput.addEventListener('change', (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+
+    const rootName = files[0].webkitRelativePath.split('/')[0];
+    pathLabel.textContent = rootName;
+
+    statusEl.textContent = '掃描中…';
+
+    const map = {}; // folderName -> { H: File, V: File }
+    const folderRegex = /^\d{3}$/;
+
+    for (const f of files) {
+      const parts = f.webkitRelativePath.split('/');
+      // parts: [root, subfolder, filename] -- 只取直屬於根目錄的子資料夾
+      if (parts.length === 3 && folderRegex.test(parts[1])) {
+        const folderName = parts[1];
+        const filename = parts[2];
+        if (filename === 'H.avif' || filename === 'V.avif') {
+          map[folderName] = map[folderName] || {};
+          map[folderName][filename[0]] = f;
+        }
+      }
+    }
+
+    folders = Object.keys(map)
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+      .map(name => ({ name, files: map[name] }));
+
+    statusEl.textContent = `共 ${folders.length} 個資料夾`;
+    emptyEl.style.display = folders.length ? 'none' : 'block';
+    if (!folders.length) {
+      emptyEl.textContent = '在此資料夾底下找不到符合 000、001… 格式的子資料夾(或裡面沒有 H.avif / V.avif)。';
+    }
+
+    render();
+  });
+
+  function render() {
+    grid.innerHTML = '';
+    if (!folders.length) return;
+
+    for (const { name, files } of folders) {
+      const card = document.createElement('div');
+      card.className = 'card';
+
+      const title = document.createElement('div');
+      title.className = 'card-title';
+      title.textContent = name;
+      card.appendChild(title);
+
+      const wrap = document.createElement('div');
+      wrap.className = 'img-wrap';
+      card.appendChild(wrap);
+
+      grid.appendChild(card);
+
+      if (mode === 'H' || mode === 'ALL') {
+        wrap.appendChild(buildSlot(files.H, 'H.avif', 'h'));
+      }
+      if (mode === 'V' || mode === 'ALL') {
+        wrap.appendChild(buildSlot(files.V, 'V.avif', 'v'));
+      }
+    }
+  }
+
+  function buildSlot(file, filename, cls) {
+    const slot = document.createElement('div');
+    slot.className = `slot ${cls}`;
+    if (file) {
+      const url = URL.createObjectURL(file);
+      const img = document.createElement('img');
+      img.src = url;
+      img.loading = 'lazy';
+      img.alt = filename;
+      slot.appendChild(img);
+    } else {
+      const missing = document.createElement('div');
+      missing.className = 'missing';
+      missing.textContent = `找不到 ${filename}`;
+      slot.appendChild(missing);
+    }
+    return slot;
+  }
+</script>
+
+</body>
+</html>
